@@ -43,3 +43,6 @@ jobs:
           else
             echo "No changes to commit"
           fi
+
+      - name: Debug Secret
+        run: echo "Secret length is ${{ secrets.PAT_GITHUB && secrets.PAT_GITHUB.length || 'NOT SET'}}"
