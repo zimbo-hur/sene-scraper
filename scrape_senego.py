@@ -1,11 +1,9 @@
-# scrape_senego.py
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import os
-from datetime import datetime
+import time
 
-def scrappe_senego(max_pages=1):
+def scrappe_senego(max_pages=2):
     BASE_URL = "https://senego.com"
     headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -24,16 +22,16 @@ def scrappe_senego(max_pages=1):
             first_key = next(iter(themes_dict))
             themes_dict.pop(first_key)
     except Exception as e:
-        print("❌ Erreur menu :", e)
+        print("❌ Erreur lors de la récupération du menu :", e)
         return pd.DataFrame()
 
     articles_data = []
 
     for theme, base_link in themes_dict.items():
-        print(f"📚 Thème : {theme}")
+        print(f"📚 Thème en cours : {theme}")
         for page_num in range(1, max_pages + 1):
             url = f"{base_link}/page/{page_num}" if page_num > 1 else base_link
-            print(f"🔍 Page {page_num}...")
+            print(f"🔍 Scraping page {page_num} de {theme}...")
 
             try:
                 soup = get_soup(url)
@@ -47,10 +45,12 @@ def scrappe_senego(max_pages=1):
                         title_tag = article.select_one("h2.archive-post-title a")
                         titre = title_tag.get_text(strip=True)
                         article_url = title_tag['href']
+
                         auteur = article.select_one("span.archive-post-author")
                         date = article.select_one("span.archive-post-date")
                         auteur = auteur.get_text(strip=True) if auteur else "Auteur inconnu"
                         date = date.get_text(strip=True) if date else "Date inconnue"
+
                         article_soup = get_soup(article_url)
                         content_tag = article_soup.select_one("div.articleLeftContainer article div.article-detail-content123")
                         contenu = content_tag.get_text(separator="\n", strip=True) if content_tag else "Contenu vide"
@@ -63,20 +63,20 @@ def scrappe_senego(max_pages=1):
                             "contenu": contenu
                         })
 
+                        time.sleep(0.3)
+
                     except Exception as e:
                         print(f"⚠ Erreur article : {e}")
 
             except Exception as e:
-                print(f"❌ Erreur page {page_num} : {e}")
+                print(f"❌ Erreur page {page_num} de {theme} : {e}")
                 break
 
-    df = pd.DataFrame(articles_data)
-    print("✅ Scraping terminé :", len(df), "articles")
+    df_articles = pd.DataFrame(articles_data)
+    print("✅ Scraping terminé. Nombre total d'articles :", len(df_articles))
 
-    os.makedirs("output", exist_ok=True)
-    filename = f"output/senego_articles_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.csv"
-    df.to_csv(filename, index=False)
-    print(f"📁 Données sauvegardées dans {filename}")
+    # Sauvegarde en CSV local
+    df_articles.to_csv('articles_scraped.csv', index=False)
 
 if __name__ == "__main__":
-    scrappe_senego(max_pages=1)
+    scrappe_senego()
