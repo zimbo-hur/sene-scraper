@@ -30,7 +30,7 @@ jobs:
 
       - name: Configure git for push
         run: |
-          git remote set-url origin https://x-access-token:${{ secrets.PAT_GITHUB }}@github.com/zimbo-hur/senego-scraper.git
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_GITHUB }}@github.com/zimbo-hur/senego-scraper
           git config user.name "github-actions[bot]"
           git config user.email "action@github.com"
 
