@@ -5,6 +5,12 @@ on:
     - cron: '0 0 * * *'  # Tous les jours à minuit UTC
   workflow_dispatch:    # Permet un déclenchement manuel
 
+# Permissions explicites pour le workflow
+permissions:
+  contents: write
+  actions: read
+  metadata: read
+
 jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
@@ -13,7 +19,9 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PAT_GITHUB }}
+          # Utilise le token par défaut d'abord
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -23,29 +31,30 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install requests beautifulsoup4 pandas
 
       - name: Run scraping script
         run: |
           python scrape_senego.py
 
-      - name: Configure git for push
+      - name: Check if changes exist
+        id: verify-changed-files
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit and push changes if any
-        run: |
-          git add articles_scraped.csv
-          if ! git diff --cached --quiet; then
-            git commit -m "Update scraped articles data - $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin main
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
           else
-            echo "No changes to commit"
+            echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Debug info (remove in production)
+      - name: Commit and push changes
+        if: steps.verify-changed-files.outputs.changed == 'true'
         run: |
-          echo "Current branch: $(git branch --show-current)"
-          echo "Files in repo:"
-          ls -la
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add articles_scraped.csv
+          git commit -m "Update scraped articles data - $(date +'%Y-%m-%d %H:%M:%S UTC')"
+          git push origin master
+
+      - name: No changes detected
+        if: steps.verify-changed-files.outputs.changed == 'false'
+        run: echo "No changes to commit"
