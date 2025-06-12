@@ -1,9 +1,9 @@
-name: Scraping Senego and Push Data
+name: Scrape Senego & SeneNews Daily
 
 on:
   schedule:
     - cron: '0 0 * * *'  # Tous les jours à minuit UTC
-  workflow_dispatch:    # Permet un déclenchement manuel
+  workflow_dispatch:     # Permet un déclenchement manuel
 
 jobs:
   scrape-and-push:
@@ -11,33 +11,126 @@ jobs:
     
     permissions:
       contents: write
-
+      
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
-
+        
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
+          
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 pandas
-
-      - name: Run scraping script
+          pip install -r requirements.txt
+          
+      - name: Run unified scraping script
         run: |
-          python scrape_senego.py
-
-      - name: Commit and push changes if any
+          python scraper.py
+          
+      - name: Check for new data
+        id: check_changes
+        run: |
+          if ls articles_unifies_*.csv 1> /dev/null 2>&1; then
+            echo "new_data=true" >> $GITHUB_OUTPUT
+            echo "csv_file=$(ls articles_unifies_*.csv | head -1)" >> $GITHUB_OUTPUT
+          else
+            echo "new_data=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Merge with existing data
+        if: steps.check_changes.outputs.new_data == 'true'
+        run: |
+          python -c "
+          import pandas as pd
+          import os
+          from datetime import datetime
+          
+          # Nom du nouveau fichier
+          new_file = '${{ steps.check_changes.outputs.csv_file }}'
+          main_file = 'articles_scraped.csv'
+          
+          # Charger les nouvelles données
+          new_data = pd.read_csv(new_file)
+          print(f'Nouvelles données: {len(new_data)} articles')
+          
+          # Vérifier si le fichier principal existe
+          if os.path.exists(main_file):
+              existing_data = pd.read_csv(main_file)
+              print(f'Données existantes: {len(existing_data)} articles')
+              
+              # Combiner et dédupliquer par URL
+              combined_data = pd.concat([existing_data, new_data], ignore_index=True)
+              combined_data = combined_data.drop_duplicates(subset=['url'], keep='last')
+              print(f'Données combinées après déduplication: {len(combined_data)} articles')
+          else:
+              combined_data = new_data
+              print('Création du fichier principal avec les nouvelles données')
+          
+          # Trier par date si possible
+          if 'date_parsed' in combined_data.columns:
+              combined_data = combined_data.sort_values('date_parsed', ascending=False)
+          
+          # Sauvegarder
+          combined_data.to_csv(main_file, index=False, encoding='utf-8')
+          print(f'Fichier principal mis à jour: {main_file}')
+          
+          # Supprimer le fichier temporaire
+          os.remove(new_file)
+          "
+          
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.new_data == 'true'
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
+          # Ajouter les fichiers modifiés
           git add articles_scraped.csv
+          
+          # Vérifier s'il y a des changements à commiter
           if ! git diff --cached --quiet; then
-            git commit -m "Update scraped articles data - $(date +'%Y-%m-%d %H:%M:%S UTC')"
-            git push origin master
+            # Compter les articles dans le fichier
+            article_count=$(python -c "import pandas as pd; print(len(pd.read_csv('articles_scraped.csv')))")
+            git commit -m "📰 Daily scraping update - ${article_count} articles total - $(date +'%Y-%m-%d %H:%M UTC')"
+            git push origin main
+            echo "✅ Data successfully updated and pushed"
           else
-            echo "No changes to commit"
+            echo "ℹ️ No new articles found today"
+          fi
+          
+      - name: Scraping summary
+        if: always()
+        run: |
+          echo "=== SCRAPING SUMMARY ==="
+          if [ -f "articles_scraped.csv" ]; then
+            total_articles=$(python -c "import pandas as pd; print(len(pd.read_csv('articles_scraped.csv')))" 2>/dev/null || echo "0")
+            echo "📊 Total articles in database: $total_articles"
+            
+            echo "📈 Recent themes distribution:"
+            python -c "
+            import pandas as pd
+            try:
+                df = pd.read_csv('articles_scraped.csv')
+                if 'theme' in df.columns:
+                    theme_counts = df['theme'].value_counts().head(5)
+                    for theme, count in theme_counts.items():
+                        print(f'   • {theme}: {count} articles')
+                else:
+                    print('   No theme data available')
+            except Exception as e:
+                print(f'   Error reading data: {e}')
+            " 2>/dev/null || echo "   Could not analyze themes"
+          else
+            echo "❌ No data file found"
           fi
