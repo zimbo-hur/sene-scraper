@@ -103,7 +103,7 @@ jobs:
             # Compter les articles dans le fichier
             article_count=$(python -c "import pandas as pd; print(len(pd.read_csv('articles_scraped.csv')))")
             git commit -m "📰 Daily scraping update - ${article_count} articles total - $(date +'%Y-%m-%d %H:%M UTC')"
-            git push origin main
+            git push origin master
             echo "✅ Data successfully updated and pushed"
           else
             echo "ℹ️ No new articles found today"
