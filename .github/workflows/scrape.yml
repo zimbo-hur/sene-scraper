@@ -232,7 +232,7 @@ jobs:
             TIMESTAMP=$(date +'%Y-%m-%d %H:%M UTC')
             
             git commit -m "📰 Daily scraping update - ${NEW_ARTICLES} nouveaux articles (${TOTAL_ARTICLES} total) - ${TIMESTAMP}"
-            git push origin main
+            git push origin master
             
             echo "✅ Données mises à jour et poussées avec succès"
             echo "📊 $NEW_ARTICLES nouveaux articles ajoutés"
