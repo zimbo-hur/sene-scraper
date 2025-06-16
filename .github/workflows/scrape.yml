@@ -58,6 +58,108 @@ jobs:
             echo "📄 Aucun fichier existant trouvé"
           fi
           
+      - name: Create Python analysis script
+        run: |
+          cat > analyze_data.py << 'EOF'
+          import pandas as pd
+          import sys
+          import os
+          from datetime import datetime, timedelta
+          
+          def analyze_scraped_data():
+              try:
+                  if not os.path.exists('articles_scraped.csv'):
+                      print("❌ Aucun fichier de données trouvé")
+                      with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+                          f.write('has_new_data=false\n')
+                          f.write('total_articles=0\n')
+                          f.write('new_articles_count=0\n')
+                      return
+                  
+                  df = pd.read_csv('articles_scraped.csv')
+                  total_articles = len(df)
+                  print(f'📈 Total articles: {total_articles}')
+                  
+                  # Analyser les articles récents (dernières 24h)
+                  has_new_data = False
+                  new_articles_count = 0
+                  
+                  if 'date_parsed' in df.columns:
+                      df['date_parsed'] = pd.to_datetime(df['date_parsed'], errors='coerce')
+                      yesterday = datetime.now() - timedelta(days=1)
+                      recent_articles = df[df['date_parsed'] >= yesterday]
+                      new_articles_count = len(recent_articles)
+                      print(f'🆕 Articles récents (24h): {new_articles_count}')
+                      
+                      if new_articles_count > 0:
+                          has_new_data = True
+                          print('📊 Nouveaux articles par source:')
+                          if 'source' in recent_articles.columns:
+                              source_counts = recent_articles['source'].value_counts()
+                              for source, count in source_counts.items():
+                                  print(f'   • {source}: {count} articles')
+                          
+                          print('🏷️ Nouveaux articles par thème:')
+                          if 'theme' in recent_articles.columns:
+                              theme_counts = recent_articles['theme'].value_counts().head(5)
+                              for theme, count in theme_counts.items():
+                                  print(f'   • {theme}: {count} articles')
+                  
+                  # Écrire les outputs
+                  with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+                      f.write(f'total_articles={total_articles}\n')
+                      f.write(f'has_new_data={str(has_new_data).lower()}\n')
+                      f.write(f'new_articles_count={new_articles_count}\n')
+                      
+              except Exception as e:
+                  print(f'❌ Erreur analyse: {e}')
+                  with open(os.environ.get('GITHUB_OUTPUT', '/dev/null'), 'a') as f:
+                      f.write('has_new_data=false\n')
+                      f.write('total_articles=0\n')
+                      f.write('new_articles_count=0\n')
+          
+          if __name__ == "__main__":
+              analyze_scraped_data()
+          EOF
+          
+      - name: Create scraping runner script
+        run: |
+          cat > run_scraper.py << 'EOF'
+          import sys
+          import os
+          
+          # Ajouter le répertoire courant au path
+          sys.path.insert(0, '.')
+          
+          # Importer et lancer le scraper
+          try:
+              from scraper import UnifiedNewsScraper
+              
+              days_back = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+              max_pages = int(sys.argv[2]) if len(sys.argv) > 2 else 15
+              
+              print(f"📅 Scraping des {days_back} derniers jours")
+              print(f"📄 Maximum {max_pages} pages par site")
+              
+              scraper = UnifiedNewsScraper()
+              success = scraper.scrape_all(days_back=days_back, max_pages=max_pages)
+              
+              if success:
+                  print('✅ Scraping réussi avec nouvelles données')
+                  sys.exit(0)
+              else:
+                  print('ℹ️ Scraping terminé sans nouvelles données')
+                  sys.exit(1)
+                  
+          except ImportError as e:
+              print(f'❌ Erreur import: {e}')
+              print('Vérifiez que le fichier scraper.py existe et contient UnifiedNewsScraper')
+              sys.exit(1)
+          except Exception as e:
+              print(f'❌ Erreur scraping: {e}')
+              sys.exit(1)
+          EOF
+          
       - name: Run unified scraping script
         id: scraping
         run: |
@@ -67,30 +169,8 @@ jobs:
           DAYS_BACK="${{ github.event.inputs.days_back || '1' }}"
           MAX_PAGES="${{ github.event.inputs.max_pages || '15' }}"
           
-          echo "📅 Scraping des $DAYS_BACK derniers jours"
-          echo "📄 Maximum $MAX_PAGES pages par site"
-          
-          # Modifier le script pour accepter les paramètres
-          python -c "
-          import sys
-          import os
-          
-          # Ajouter le répertoire courant au path
-          sys.path.insert(0, '.')
-          
-          # Importer et lancer le scraper
-          from scraper import UnifiedNewsScraper
-          
-          scraper = UnifiedNewsScraper()
-          success = scraper.scrape_all(days_back=int('$DAYS_BACK'), max_pages=int('$MAX_PAGES'))
-          
-          if success:
-              print('✅ Scraping réussi avec nouvelles données')
-              exit(0)
-          else:
-              print('ℹ️ Scraping terminé sans nouvelles données')
-              exit(1)
-          " 2>&1 | tee scraping_log.txt
+          # Lancer le scraper
+          python run_scraper.py "$DAYS_BACK" "$MAX_PAGES" 2>&1 | tee scraping_log.txt
           
           # Capturer le code de sortie
           SCRAPING_EXIT_CODE=${PIPESTATUS[0]}
@@ -104,59 +184,36 @@ jobs:
         if: always()
         id: analyze_data
         run: |
-          if [ -f "articles_scraped.csv" ]; then
-            echo "📊 Analyse des données..."
-            
-            python -c "
-            import pandas as pd
-            from datetime import datetime, timedelta
-            
-            try:
-                df = pd.read_csv('articles_scraped.csv')
-                total_articles = len(df)
-                print(f'📈 Total articles: {total_articles}')
-                
-                # Analyser les articles récents (dernières 24h)
-                if 'date_parsed' in df.columns:
-                    df['date_parsed'] = pd.to_datetime(df['date_parsed'], errors='coerce')
-                    yesterday = datetime.now() - timedelta(days=1)
-                    recent_articles = df[df['date_parsed'] >= yesterday]
-                    print(f'🆕 Articles récents (24h): {len(recent_articles)}')
-                    
-                    if len(recent_articles) > 0:
-                        print('📊 Nouveaux articles par source:')
-                        source_counts = recent_articles['source'].value_counts()
-                        for source, count in source_counts.items():
-                            print(f'   • {source}: {count} articles')
-                        
-                        print('🏷️ Nouveaux articles par thème:')
-                        theme_counts = recent_articles['theme'].value_counts().head(5)
-                        for theme, count in theme_counts.items():
-                            print(f'   • {theme}: {count} articles')
-                
-                # Vérifier s'il y a eu des changements
-                with open('$GITHUB_OUTPUT', 'a') as f:
-                    f.write(f'total_articles={total_articles}\n')
-                    if 'date_parsed' in df.columns and len(recent_articles) > 0:
-                        f.write(f'has_new_data=true\n')
-                        f.write(f'new_articles_count={len(recent_articles)}\n')
-                    else:
-                        f.write(f'has_new_data=false\n')
-                        f.write(f'new_articles_count=0\n')
-                        
-            except Exception as e:
-                print(f'❌ Erreur analyse: {e}')
-                with open('$GITHUB_OUTPUT', 'a') as f:
-                    f.write('has_new_data=false\n')
-                    f.write('total_articles=0\n')
-                    f.write('new_articles_count=0\n')
-            "
-          else
-            echo "❌ Aucun fichier de données trouvé"
-            echo "has_new_data=false" >> $GITHUB_OUTPUT
-            echo "total_articles=0" >> $GITHUB_OUTPUT
-            echo "new_articles_count=0" >> $GITHUB_OUTPUT
-          fi
+          echo "📊 Analyse des données..."
+          python analyze_data.py
+          
+      - name: Generate theme report
+        if: always()
+        run: |
+          cat > generate_report.py << 'EOF'
+          import pandas as pd
+          import os
+          
+          def generate_theme_report():
+              try:
+                  if os.path.exists('articles_scraped.csv'):
+                      df = pd.read_csv('articles_scraped.csv')
+                      if 'theme' in df.columns:
+                          theme_counts = df['theme'].value_counts().head(5)
+                          for i, (theme, count) in enumerate(theme_counts.items(), 1):
+                              print(f'{i}. {theme}: {count} articles')
+                      else:
+                          print('Données de thème non disponibles')
+                  else:
+                      print('Erreur lors de l analyse des thèmes')
+              except Exception as e:
+                  print(f'Erreur: {e}')
+          
+          if __name__ == "__main__":
+              generate_theme_report()
+          EOF
+          
+          python generate_report.py > theme_report.txt
           
       - name: Commit and push changes
         if: steps.analyze_data.outputs.has_new_data == 'true'
@@ -187,7 +244,7 @@ jobs:
       - name: Generate scraping report
         if: always()
         run: |
-          echo "=== 📊 RAPPORT DE SCRAPING ===" >> scraping_report.md
+          echo "=== 📊 RAPPORT DE SCRAPING ===" > scraping_report.md
           echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')" >> scraping_report.md
           echo "**Statut:** $([[ '${{ steps.scraping.outputs.scraping_success }}' == 'true' ]] && echo '✅ Succès' || echo '⚠️ Aucune nouvelle donnée')" >> scraping_report.md
           echo "" >> scraping_report.md
@@ -200,19 +257,11 @@ jobs:
             
             # Ajouter le top des thèmes
             echo "**🏷️ Top 5 des thèmes:**" >> scraping_report.md
-            python -c "
-            import pandas as pd
-            try:
-                df = pd.read_csv('articles_scraped.csv')
-                if 'theme' in df.columns:
-                    theme_counts = df['theme'].value_counts().head(5)
-                    for i, (theme, count) in enumerate(theme_counts.items(), 1):
-                        print(f'{i}. {theme}: {count} articles')
-                else:
-                    print('Données de thème non disponibles')
-            except:
-                print('Erreur lors de l analyse des thèmes')
-            " >> scraping_report.md
+            if [ -f "theme_report.txt" ]; then
+              cat theme_report.txt >> scraping_report.md
+            else
+              echo "Données de thème non disponibles" >> scraping_report.md
+            fi
           else
             echo "**❌ Aucune donnée disponible**" >> scraping_report.md
           fi
@@ -232,13 +281,15 @@ jobs:
           path: |
             scraping_log.txt
             scraping_report.md
+            theme_report.txt
           retention-days: 7
           
       - name: Cleanup temporary files
         if: always()
         run: |
           # Nettoyer les fichiers temporaires
-          rm -f scraping_log.txt scraping_report.md
+          rm -f scraping_log.txt scraping_report.md theme_report.txt
+          rm -f analyze_data.py run_scraper.py generate_report.py
           
           # Garder seulement le fichier principal
           find . -name "articles_unifies_*.csv" -delete 2>/dev/null || true
