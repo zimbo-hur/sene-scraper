@@ -2,12 +2,24 @@ name: Scrape Senego & SeneNews Daily
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Tous les jours à minuit UTC
+    - cron: '0 6 * * *'  # Tous les jours à 6h UTC (7h au Sénégal)
   workflow_dispatch:     # Permet un déclenchement manuel
+    inputs:
+      days_back:
+        description: 'Nombre de jours à scraper'
+        required: false
+        default: '1'
+        type: string
+      max_pages:
+        description: 'Nombre maximum de pages par site'
+        required: false
+        default: '15'
+        type: string
 
 jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Limite de temps pour éviter les blocages
     
     permissions:
       contents: write
@@ -34,103 +46,201 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           
-      - name: Run unified scraping script
+      - name: Check existing data
+        id: check_existing
         run: |
-          python scraper.py
-          
-      - name: Check for new data
-        id: check_changes
-        run: |
-          if ls articles_unifies_*.csv 1> /dev/null 2>&1; then
-            echo "new_data=true" >> $GITHUB_OUTPUT
-            echo "csv_file=$(ls articles_unifies_*.csv | head -1)" >> $GITHUB_OUTPUT
+          if [ -f "articles_scraped.csv" ]; then
+            article_count=$(python -c "import pandas as pd; print(len(pd.read_csv('articles_scraped.csv')))" 2>/dev/null || echo "0")
+            echo "existing_articles=$article_count" >> $GITHUB_OUTPUT
+            echo "📊 Articles existants: $article_count"
           else
-            echo "new_data=false" >> $GITHUB_OUTPUT
+            echo "existing_articles=0" >> $GITHUB_OUTPUT
+            echo "📄 Aucun fichier existant trouvé"
           fi
           
-      - name: Merge with existing data
-        if: steps.check_changes.outputs.new_data == 'true'
+      - name: Run unified scraping script
+        id: scraping
         run: |
+          echo "🚀 Démarrage du scraping..."
+          
+          # Paramètres configurables
+          DAYS_BACK="${{ github.event.inputs.days_back || '1' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '15' }}"
+          
+          echo "📅 Scraping des $DAYS_BACK derniers jours"
+          echo "📄 Maximum $MAX_PAGES pages par site"
+          
+          # Modifier le script pour accepter les paramètres
           python -c "
-          import pandas as pd
+          import sys
           import os
-          from datetime import datetime
           
-          # Nom du nouveau fichier
-          new_file = '${{ steps.check_changes.outputs.csv_file }}'
-          main_file = 'articles_scraped.csv'
+          # Ajouter le répertoire courant au path
+          sys.path.insert(0, '.')
           
-          # Charger les nouvelles données
-          new_data = pd.read_csv(new_file)
-          print(f'Nouvelles données: {len(new_data)} articles')
+          # Importer et lancer le scraper
+          from scraper import UnifiedNewsScraper
           
-          # Vérifier si le fichier principal existe
-          if os.path.exists(main_file):
-              existing_data = pd.read_csv(main_file)
-              print(f'Données existantes: {len(existing_data)} articles')
-              
-              # Combiner et dédupliquer par URL
-              combined_data = pd.concat([existing_data, new_data], ignore_index=True)
-              combined_data = combined_data.drop_duplicates(subset=['url'], keep='last')
-              print(f'Données combinées après déduplication: {len(combined_data)} articles')
+          scraper = UnifiedNewsScraper()
+          success = scraper.scrape_all(days_back=int('$DAYS_BACK'), max_pages=int('$MAX_PAGES'))
+          
+          if success:
+              print('✅ Scraping réussi avec nouvelles données')
+              exit(0)
           else:
-              combined_data = new_data
-              print('Création du fichier principal avec les nouvelles données')
+              print('ℹ️ Scraping terminé sans nouvelles données')
+              exit(1)
+          " 2>&1 | tee scraping_log.txt
           
-          # Trier par date si possible
-          if 'date_parsed' in combined_data.columns:
-              combined_data = combined_data.sort_values('date_parsed', ascending=False)
+          # Capturer le code de sortie
+          SCRAPING_EXIT_CODE=${PIPESTATUS[0]}
+          echo "scraping_success=$([[ $SCRAPING_EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
           
-          # Sauvegarder
-          combined_data.to_csv(main_file, index=False, encoding='utf-8')
-          print(f'Fichier principal mis à jour: {main_file}')
+          # Afficher le log pour debug
+          echo "=== LOG DE SCRAPING ==="
+          cat scraping_log.txt
           
-          # Supprimer le fichier temporaire
-          os.remove(new_file)
-          "
+      - name: Analyze scraped data
+        if: always()
+        id: analyze_data
+        run: |
+          if [ -f "articles_scraped.csv" ]; then
+            echo "📊 Analyse des données..."
+            
+            python -c "
+            import pandas as pd
+            from datetime import datetime, timedelta
+            
+            try:
+                df = pd.read_csv('articles_scraped.csv')
+                total_articles = len(df)
+                print(f'📈 Total articles: {total_articles}')
+                
+                # Analyser les articles récents (dernières 24h)
+                if 'date_parsed' in df.columns:
+                    df['date_parsed'] = pd.to_datetime(df['date_parsed'], errors='coerce')
+                    yesterday = datetime.now() - timedelta(days=1)
+                    recent_articles = df[df['date_parsed'] >= yesterday]
+                    print(f'🆕 Articles récents (24h): {len(recent_articles)}')
+                    
+                    if len(recent_articles) > 0:
+                        print('📊 Nouveaux articles par source:')
+                        source_counts = recent_articles['source'].value_counts()
+                        for source, count in source_counts.items():
+                            print(f'   • {source}: {count} articles')
+                        
+                        print('🏷️ Nouveaux articles par thème:')
+                        theme_counts = recent_articles['theme'].value_counts().head(5)
+                        for theme, count in theme_counts.items():
+                            print(f'   • {theme}: {count} articles')
+                
+                # Vérifier s'il y a eu des changements
+                with open('$GITHUB_OUTPUT', 'a') as f:
+                    f.write(f'total_articles={total_articles}\n')
+                    if 'date_parsed' in df.columns and len(recent_articles) > 0:
+                        f.write(f'has_new_data=true\n')
+                        f.write(f'new_articles_count={len(recent_articles)}\n')
+                    else:
+                        f.write(f'has_new_data=false\n')
+                        f.write(f'new_articles_count=0\n')
+                        
+            except Exception as e:
+                print(f'❌ Erreur analyse: {e}')
+                with open('$GITHUB_OUTPUT', 'a') as f:
+                    f.write('has_new_data=false\n')
+                    f.write('total_articles=0\n')
+                    f.write('new_articles_count=0\n')
+            "
+          else
+            echo "❌ Aucun fichier de données trouvé"
+            echo "has_new_data=false" >> $GITHUB_OUTPUT
+            echo "total_articles=0" >> $GITHUB_OUTPUT
+            echo "new_articles_count=0" >> $GITHUB_OUTPUT
+          fi
           
       - name: Commit and push changes
-        if: steps.check_changes.outputs.new_data == 'true'
+        if: steps.analyze_data.outputs.has_new_data == 'true'
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # Ajouter les fichiers modifiés
+          # Ajouter tous les fichiers CSV modifiés
           git add articles_scraped.csv
           
           # Vérifier s'il y a des changements à commiter
           if ! git diff --cached --quiet; then
-            # Compter les articles dans le fichier
-            article_count=$(python -c "import pandas as pd; print(len(pd.read_csv('articles_scraped.csv')))")
-            git commit -m "📰 Daily scraping update - ${article_count} articles total - $(date +'%Y-%m-%d %H:%M UTC')"
-            git push origin master
-            echo "✅ Data successfully updated and pushed"
+            # Créer un message de commit informatif
+            TOTAL_ARTICLES="${{ steps.analyze_data.outputs.total_articles }}"
+            NEW_ARTICLES="${{ steps.analyze_data.outputs.new_articles_count }}"
+            TIMESTAMP=$(date +'%Y-%m-%d %H:%M UTC')
+            
+            git commit -m "📰 Daily scraping update - ${NEW_ARTICLES} nouveaux articles (${TOTAL_ARTICLES} total) - ${TIMESTAMP}"
+            git push origin main
+            
+            echo "✅ Données mises à jour et poussées avec succès"
+            echo "📊 $NEW_ARTICLES nouveaux articles ajoutés"
+            echo "📈 $TOTAL_ARTICLES articles au total"
           else
-            echo "ℹ️ No new articles found today"
+            echo "ℹ️ Aucun changement détecté dans les fichiers"
           fi
           
-      - name: Scraping summary
+      - name: Generate scraping report
         if: always()
         run: |
-          echo "=== SCRAPING SUMMARY ==="
+          echo "=== 📊 RAPPORT DE SCRAPING ===" >> scraping_report.md
+          echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')" >> scraping_report.md
+          echo "**Statut:** $([[ '${{ steps.scraping.outputs.scraping_success }}' == 'true' ]] && echo '✅ Succès' || echo '⚠️ Aucune nouvelle donnée')" >> scraping_report.md
+          echo "" >> scraping_report.md
+          
           if [ -f "articles_scraped.csv" ]; then
-            total_articles=$(python -c "import pandas as pd; print(len(pd.read_csv('articles_scraped.csv')))" 2>/dev/null || echo "0")
-            echo "📊 Total articles in database: $total_articles"
+            echo "**📈 Statistiques:**" >> scraping_report.md
+            echo "- Total articles: ${{ steps.analyze_data.outputs.total_articles }}" >> scraping_report.md
+            echo "- Nouveaux articles: ${{ steps.analyze_data.outputs.new_articles_count }}" >> scraping_report.md
+            echo "" >> scraping_report.md
             
-            echo "📈 Recent themes distribution:"
+            # Ajouter le top des thèmes
+            echo "**🏷️ Top 5 des thèmes:**" >> scraping_report.md
             python -c "
             import pandas as pd
             try:
                 df = pd.read_csv('articles_scraped.csv')
                 if 'theme' in df.columns:
                     theme_counts = df['theme'].value_counts().head(5)
-                    for theme, count in theme_counts.items():
-                        print(f'   • {theme}: {count} articles')
+                    for i, (theme, count) in enumerate(theme_counts.items(), 1):
+                        print(f'{i}. {theme}: {count} articles')
                 else:
-                    print('   No theme data available')
-            except Exception as e:
-                print(f'   Error reading data: {e}')
-            " 2>/dev/null || echo "   Could not analyze themes"
+                    print('Données de thème non disponibles')
+            except:
+                print('Erreur lors de l analyse des thèmes')
+            " >> scraping_report.md
           else
-            echo "❌ No data file found"
+            echo "**❌ Aucune donnée disponible**" >> scraping_report.md
           fi
+          
+          echo "" >> scraping_report.md
+          echo "---" >> scraping_report.md
+          
+          # Afficher le rapport
+          echo "=== 📋 RAPPORT FINAL ==="
+          cat scraping_report.md
+          
+      - name: Upload scraping logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraping-logs-${{ github.run_number }}
+          path: |
+            scraping_log.txt
+            scraping_report.md
+          retention-days: 7
+          
+      - name: Cleanup temporary files
+        if: always()
+        run: |
+          # Nettoyer les fichiers temporaires
+          rm -f scraping_log.txt scraping_report.md
+          
+          # Garder seulement le fichier principal
+          find . -name "articles_unifies_*.csv" -delete 2>/dev/null || true
+          
+          echo "🧹 Nettoyage terminé"

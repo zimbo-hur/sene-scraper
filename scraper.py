@@ -10,14 +10,39 @@ from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse
 import time
 import sys
+import os
 
 class UnifiedNewsScraper:
-    def __init__(self):
+    def __init__(self, main_csv_file='articles_scraped.csv'):
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         self.all_articles = []
+        self.main_csv_file = main_csv_file
+        self.existing_urls = set()
+        
+        # Charger les URLs existantes pour éviter les doublons
+        self.load_existing_urls()
+    
+    def load_existing_urls(self):
+        """Charge les URLs existantes pour éviter les doublons"""
+        if os.path.exists(self.main_csv_file):
+            try:
+                existing_df = pd.read_csv(self.main_csv_file)
+                if 'url' in existing_df.columns:
+                    self.existing_urls = set(existing_df['url'].dropna().tolist())
+                    print(f"📂 Fichier existant chargé: {len(self.existing_urls)} URLs existantes")
+                else:
+                    print("⚠️ Colonne 'url' introuvable dans le fichier existant")
+            except Exception as e:
+                print(f"⚠️ Erreur chargement fichier existant: {e}")
+        else:
+            print("📄 Nouveau fichier - aucune donnée existante")
+    
+    def is_duplicate_url(self, url):
+        """Vérifie si l'URL existe déjà"""
+        return url in self.existing_urls
     
     def harmonize_theme(self, original_theme):
         """Harmonise les thèmes selon les règles spécifiées"""
@@ -227,8 +252,14 @@ class UnifiedNewsScraper:
             
             page_articles_in_range = 0
             articles_too_old = 0
+            articles_skipped_duplicate = 0
             
             for article_url in article_links:
+                # Vérifier si l'article existe déjà
+                if self.is_duplicate_url(article_url):
+                    articles_skipped_duplicate += 1
+                    continue
+                
                 article_data = self.extract_senenews_article(article_url)
                 
                 if article_data and article_data['date']:
@@ -240,15 +271,16 @@ class UnifiedNewsScraper:
                             article_data['theme_original'] = article_data.get('rubrique', 'Actualités')
                             article_data['date_parsed'] = article_date.strftime('%Y-%m-%d %H:%M')
                             self.all_articles.append(article_data)
+                            self.existing_urls.add(article_url)  # Ajouter à la liste des URLs existantes
                             page_articles_in_range += 1
                             articles_found += 1
-                            print(f"✅ Article ajouté: {article_data['titre'][:50]}...")
+                            print(f"✅ Nouvel article ajouté: {article_data['titre'][:50]}...")
                         elif article_date < start_date:
                             articles_too_old += 1
                 
                 time.sleep(1)
             
-            print(f"📊 Page {page}: {page_articles_in_range} articles dans la période")
+            print(f"📊 Page {page}: {page_articles_in_range} nouveaux, {articles_skipped_duplicate} doublons, {articles_too_old} trop anciens")
             
             if articles_too_old > page_articles_in_range and page_articles_in_range == 0:
                 print("🛑 Articles trop anciens, arrêt du scraping SeneNews")
@@ -256,7 +288,7 @@ class UnifiedNewsScraper:
             
             time.sleep(2)
         
-        print(f"✅ SeneNews terminé: {articles_found} articles récupérés")
+        print(f"✅ SeneNews terminé: {articles_found} nouveaux articles récupérés")
         return articles_found
     
     def extract_senenews_article(self, article_url):
@@ -371,6 +403,7 @@ class UnifiedNewsScraper:
                 
                 page_articles_in_range = 0
                 page_articles_too_old = 0
+                articles_skipped_duplicate = 0
                 
                 for article in articles:
                     try:
@@ -380,6 +413,11 @@ class UnifiedNewsScraper:
                             
                         titre = title_tag.get_text(strip=True)
                         article_url = title_tag['href']
+                        
+                        # Vérifier si l'article existe déjà
+                        if self.is_duplicate_url(article_url):
+                            articles_skipped_duplicate += 1
+                            continue
                         
                         auteur_elem = article.select_one("span.archive-post-author")
                         date_elem = article.select_one("span.archive-post-date")
@@ -411,10 +449,11 @@ class UnifiedNewsScraper:
                                         "rubrique": theme
                                     })
                                     
+                                    self.existing_urls.add(article_url)  # Ajouter à la liste des URLs existantes
                                     page_articles_in_range += 1
                                     theme_articles_found += 1
                                     articles_found += 1
-                                    print(f"✅ Article ajouté: {titre[:50]}...")
+                                    print(f"✅ Nouvel article ajouté: {titre[:50]}...")
                             elif article_date < start_date:
                                 page_articles_too_old += 1
                         
@@ -423,7 +462,7 @@ class UnifiedNewsScraper:
                     except Exception as e:
                         print(f"❌ Erreur article Senego: {e}")
                 
-                print(f"📊 Page {page_num}: {page_articles_in_range} articles dans la période")
+                print(f"📊 Page {page_num}: {page_articles_in_range} nouveaux, {articles_skipped_duplicate} doublons")
                 
                 # Arrêter si tous les articles sont trop anciens
                 if page_articles_too_old > 0 and page_articles_in_range == 0:
@@ -432,9 +471,9 @@ class UnifiedNewsScraper:
                 
                 time.sleep(1)
             
-            print(f"📊 Thème {theme}: {theme_articles_found} articles")
+            print(f"📊 Thème {theme}: {theme_articles_found} nouveaux articles")
         
-        print(f"✅ Senego terminé: {articles_found} articles récupérés")
+        print(f"✅ Senego terminé: {articles_found} nouveaux articles récupérés")
         return articles_found
     
     def process_themes(self):
@@ -442,7 +481,7 @@ class UnifiedNewsScraper:
         print("\n🔄 HARMONISATION DES THÈMES")
         
         if not self.all_articles:
-            print("❌ Aucun article à traiter")
+            print("❌ Aucun nouvel article à traiter")
             return
         
         # Créer le DataFrame
@@ -480,8 +519,76 @@ class UnifiedNewsScraper:
         
         print(f"✅ Harmonisation terminée: {len(df['theme'].unique())} thèmes uniques")
     
+    def merge_and_save_data(self):
+        """Fusionne les nouvelles données avec le fichier principal et sauvegarde"""
+        if not self.all_articles:
+            print("❌ Aucune nouvelle donnée à fusionner")
+            return False
+        
+        print(f"\n🔄 FUSION DES DONNÉES")
+        
+        # Créer DataFrame des nouvelles données
+        new_df = pd.DataFrame(self.all_articles)
+        print(f"📥 Nouvelles données: {len(new_df)} articles")
+        
+        # Charger les données existantes si le fichier existe
+        if os.path.exists(self.main_csv_file):
+            try:
+                existing_df = pd.read_csv(self.main_csv_file)
+                print(f"📂 Données existantes: {len(existing_df)} articles")
+                
+                # Combiner les données
+                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                
+                # Dédupliquer par URL (garder la version la plus récente)
+                combined_df = combined_df.drop_duplicates(subset=['url'], keep='last')
+                print(f"🔧 Après déduplication: {len(combined_df)} articles")
+                
+            except Exception as e:
+                print(f"⚠️ Erreur lecture fichier existant: {e}")
+                combined_df = new_df
+        else:
+            print("📄 Création du fichier principal")
+            combined_df = new_df
+        
+        # Trier par date si possible
+        if 'date_parsed' in combined_df.columns:
+            combined_df = combined_df.sort_values('date_parsed', ascending=False)
+        
+        # Réorganiser les colonnes
+        columns_order = ['source', 'theme', 'titre', 'date', 'date_parsed', 'auteur', 'contenu', 'url']
+        existing_columns = [col for col in columns_order if col in combined_df.columns]
+        combined_df = combined_df[existing_columns]
+        
+        # Sauvegarder
+        try:
+            combined_df.to_csv(self.main_csv_file, index=False, encoding='utf-8')
+            print(f"💾 Fichier principal mis à jour: {self.main_csv_file}")
+            print(f"📊 Total articles: {len(combined_df)}")
+            
+            # Afficher la répartition des thèmes
+            if 'theme' in combined_df.columns:
+                print(f"\n📊 Répartition des thèmes (top 10):")
+                theme_distribution = combined_df['theme'].value_counts().head(10)
+                for theme, count in theme_distribution.items():
+                    percentage = (count / len(combined_df)) * 100
+                    print(f"   • {theme}: {count} articles ({percentage:.1f}%)")
+            
+            # Afficher les nouvelles données par source
+            if len(new_df) > 0:
+                print(f"\n📈 Nouveaux articles par source:")
+                source_counts = new_df['source'].value_counts()
+                for source, count in source_counts.items():
+                    print(f"   • {source}: {count} nouveaux articles")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Erreur sauvegarde: {e}")
+            return False
+    
     def scrape_all(self, days_back=1, max_pages=10):
-        """Scraper les deux sites"""
+        """Scraper les deux sites et fusionner avec les données existantes"""
         print(f"🚀 SCRAPER UNIFIÉ - Récupération des {days_back} derniers jours")
         
         # Calculer les dates
@@ -489,6 +596,7 @@ class UnifiedNewsScraper:
         start_date = end_date - timedelta(days=days_back)
         
         print(f"📅 Période: {start_date.strftime('%d/%m/%Y %H:%M')} - {end_date.strftime('%d/%m/%Y %H:%M')}")
+        print(f"📂 URLs existantes chargées: {len(self.existing_urls)}")
         
         # Scraper les deux sites
         senenews_count = self.scrape_senenews(start_date, end_date, max_pages)
@@ -497,76 +605,43 @@ class UnifiedNewsScraper:
         # Traiter les thèmes après collecte
         self.process_themes()
         
-        total_articles = len(self.all_articles)
+        total_new_articles = len(self.all_articles)
         
         print(f"\n🎉 RÉSUMÉ FINAL:")
-        print(f"   📰 SeneNews: {senenews_count} articles")
-        print(f"   📰 Senego: {senego_count} articles")
-        print(f"   📰 Total: {total_articles} articles")
+        print(f"   📰 SeneNews: {senenews_count} nouveaux articles")
+        print(f"   📰 Senego: {senego_count} nouveaux articles")
+        print(f"   📰 Total nouveaux: {total_new_articles} articles")
         
-        return self.all_articles
-    
-    def save_to_csv(self, filename=None):
-        """Sauvegarder tous les articles dans un fichier CSV unifié"""
-        if not self.all_articles:
-            print("❌ Aucun article à sauvegarder")
-            return None
-        
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"articles_unifies_{timestamp}.csv"
-        
-        # Créer le DataFrame
-        df = pd.DataFrame(self.all_articles)
-        
-        # Trier par date si possible
-        if 'date_parsed' in df.columns:
-            df = df.sort_values('date_parsed', ascending=False)
-        
-        # Réorganiser les colonnes
-        columns_order = ['source', 'theme', 'titre', 'date', 'date_parsed', 'auteur', 'contenu', 'url']
-        existing_columns = [col for col in columns_order if col in df.columns]
-        df = df[existing_columns]
-        
-        # Sauvegarder
-        df.to_csv(filename, index=False, encoding='utf-8')
-        
-        print(f"💾 Fichier CSV sauvegardé: {filename}")
-        print(f"📊 Colonnes: {list(df.columns)}")
-        print(f"📈 Lignes: {len(df)}")
-        
-        # Afficher la répartition finale des thèmes
-        print(f"\n📊 Répartition finale des thèmes:")
-        theme_distribution = df['theme'].value_counts()
-        for theme, count in theme_distribution.items():
-            percentage = (count / len(df)) * 100
-            print(f"   • {theme}: {count} articles ({percentage:.1f}%)")
-        
-        return filename
+        # Fusionner et sauvegarder
+        if total_new_articles > 0:
+            success = self.merge_and_save_data()
+            return success
+        else:
+            print("ℹ️ Aucun nouvel article trouvé")
+            return False
 
 def main():
     scraper = UnifiedNewsScraper()
     
     try:
-        # Scraper les deux sites
-        articles = scraper.scrape_all(days_back=1, max_pages=15)
+        # Scraper les deux sites et fusionner
+        success = scraper.scrape_all(days_back=1, max_pages=15)
         
-        if articles:
-            # Sauvegarder le fichier CSV unifié
-            csv_file = scraper.save_to_csv()
-            
-            print(f"\n🎯 SCRAPING TERMINÉ AVEC SUCCÈS!")
-            print(f"📄 Fichier CSV unifié: {csv_file}")
+        if success:
+            print(f"\n🎯 SCRAPING ET FUSION TERMINÉS AVEC SUCCÈS!")
+            print(f"📄 Fichier principal mis à jour: {scraper.main_csv_file}")
             print(f"🔗 Sources scrapées: SeneNews + Senego")
             print(f"🏷️ Thèmes harmonisés automatiquement")
-            
+            print(f"🔄 Données fusionnées avec déduplication")
         else:
-            print("\n❌ Aucun article trouvé dans la période spécifiée")
+            print(f"\n📊 SCRAPING TERMINÉ - Aucune nouvelle donnée")
+            print(f"📄 Fichier principal: {scraper.main_csv_file}")
     
     except KeyboardInterrupt:
         print("\n⚠️ Scraping interrompu par l'utilisateur")
     except Exception as e:
         print(f"\n❌ Erreur pendant le scraping: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
