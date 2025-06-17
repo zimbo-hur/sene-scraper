@@ -7,6 +7,7 @@
 <center><strong>Mamadou Saïdou DIALLO</strong></center><br>
 <center><em>Étudiants en AS3 - Option Data Science</em></center><br>
 
+
 <center>Cours tenu par :</center>  <br>
 <center><strong>M. Baye Demba DIACK</strong></center>  <br>
 <center><em>Chef du Bureau des Données et des Solutions informatique (BDSI)</em></center>  <br>
