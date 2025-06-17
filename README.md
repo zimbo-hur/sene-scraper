@@ -2,15 +2,15 @@
 ## <center>Projet de Web Scraping</center>
 ### <center>📰 Analyse des tendances médiatiques, topic modeling</center>
 
-<center>Réalisé par :</center>  
-<center><strong>Ahmed Firhoun OUMAROU SOULEYE</strong></center>  
-<center><strong>Mamadou Saïdou DIALLO</strong></center>  
-<center><em>Étudiants en AS3 - Option Data Science</em></center>
+<center>Réalisé par :</center>  <br>
+<center><strong>Ahmed Firhoun OUMAROU SOULEYE</strong></center><br>
+<center><strong>Mamadou Saïdou DIALLO</strong></center><br>
+<center><em>Étudiants en AS3 - Option Data Science</em></center><br>
 
-<center>Cours tenu par :</center>  
-<center><strong>M. Baye Demba DIACK</strong></center>  
-<center><em>Chef du Bureau des Données et des Solutions informatique (BDSI)</em></center>  
-<center>Année académique 2024-2025</center>
+<center>Cours tenu par :</center>  <br>
+<center><strong>M. Baye Demba DIACK</strong></center>  <br>
+<center><em>Chef du Bureau des Données et des Solutions informatique (BDSI)</em></center>  <br>
+<center>Année académique 2024-2025</center><br>
 
 ---
 
