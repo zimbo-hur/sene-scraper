@@ -13,6 +13,7 @@
 <center><em>Chef du Bureau des Données et des Solutions informatique (BDSI)</em></center>  <br>
 <center>Année académique 2024-2025</center><br>
 
+
 ---
 
 > Collecte automatisée et analyse des tendances d'actualités sénégalaises avec du Topic Modeling LDA
