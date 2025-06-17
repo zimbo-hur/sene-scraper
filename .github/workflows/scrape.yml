@@ -2,7 +2,7 @@ name: Scrape Senego & SeneNews Daily
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Tous les jours à 6h UTC (7h au Sénégal)
+    - cron: '0 0 * * *'  # Tous les jours à 0h UTC (1h au Sénégal)
   workflow_dispatch:     # Permet un déclenchement manuel
     inputs:
       days_back:
