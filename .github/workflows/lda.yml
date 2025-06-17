@@ -50,15 +50,69 @@ jobs:
       - name: Check data availability
         id: check_data
         run: |
+          echo "=== DEBUG COMPLET ==="
+          
           if [ -f "articles_scraped.csv" ]; then
+            echo "✅ Fichier CSV trouvé"
+            ls -la articles_scraped.csv
+            
+            echo "=== Premières lignes du fichier ==="
+            head -3 articles_scraped.csv
+            
+            echo "=== Test de lecture Python avec debug complet ==="
+            python -c "
+import pandas as pd
+import sys
+
+print('🐍 Python version:', sys.version)
+print('🐼 Pandas version:', pd.__version__)
+
+try:
+    print('📂 Tentative de lecture du CSV...')
+    
+    # Test avec différents encodages
+    for encoding in ['utf-8', 'latin-1', 'cp1252']:
+        try:
+            print(f'   Essai avec encodage {encoding}...')
+            df = pd.read_csv('articles_scraped.csv', encoding=encoding, nrows=5)
+            print(f'   ✅ Succès avec {encoding}!')
+            print(f'   Shape: {df.shape}')
+            print(f'   Colonnes: {list(df.columns)}')
+            break
+        except Exception as e:
+            print(f'   ❌ Échec avec {encoding}: {str(e)[:100]}')
+    
+    # Lecture complète avec l'encodage qui marche
+    print('📊 Lecture complète...')
+    df = pd.read_csv('articles_scraped.csv')
+    print(f'Total lignes: {len(df)}')
+    print(f'Colonnes: {list(df.columns)}')
+    
+    if 'contenu' in df.columns:
+        non_null_count = len(df.dropna(subset=['contenu']))
+        print(f'Articles avec contenu: {non_null_count}')
+        print(non_null_count)
+    else:
+        print('❌ Colonne \\'contenu\\' introuvable')
+        print('0')
+        
+except Exception as e:
+    print(f'❌ ERREUR CRITIQUE: {str(e)}')
+    import traceback
+    traceback.print_exc()
+    print('0')
+"
+            
+            # Capturer le résultat
             article_count=$(python -c "
-            import pandas as pd
-            try:
-                df = pd.read_csv('articles_scraped.csv')
-                print(len(df.dropna(subset=['contenu'])))
-            except Exception as e:
-                print('0')
-            " 2>/dev/null || echo "0")
+import pandas as pd
+try:
+    df = pd.read_csv('articles_scraped.csv')
+    print(len(df.dropna(subset=['contenu'])))
+except:
+    print('0')
+")
+            
             echo "article_count=$article_count" >> $GITHUB_OUTPUT
             echo "📊 Articles avec contenu: $article_count"
             
@@ -71,9 +125,11 @@ jobs:
               echo "⚠️ Données insuffisantes ($article_count articles, minimum 50 requis)"
             fi
           else
+            echo "❌ Fichier CSV introuvable"
+            echo "Contenu du répertoire:"
+            ls -la
             echo "article_count=0" >> $GITHUB_OUTPUT
             echo "sufficient_data=false" >> $GITHUB_OUTPUT
-            echo "❌ Fichier articles_scraped.csv introuvable"
           fi
           
       - name: Create models directory
