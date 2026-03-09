@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-03-02T06:06:30.061503",
-  "n_documents": 12444,
-  "n_features": 26220,
+  "timestamp": "2026-03-09T06:11:38.645064",
+  "n_documents": 12791,
+  "n_features": 26491,
   "best_params": {
-    "n_components": 3,
-    "learning_decay": 0.8134391508079954,
-    "learning_offset": 79
+    "n_components": 5,
+    "learning_decay": 0.7990509482879671,
+    "learning_offset": 77
   },
-  "best_perplexity": 9607.755953243535,
+  "best_perplexity": 9140.75553791185,
   "n_trials": 30
 }
